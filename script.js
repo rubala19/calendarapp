@@ -1,3 +1,6 @@
+// Alpha Vantage key (fallback)
+const ALPHA_VANTAGE_KEY = "8NS6OXY29LA15EEF";
+
 // Preloaded events
 const events = [
   {symbol:"AVGO", name:"Broadcom Inc.", date:"2025-09-04", time:"Est. (After close)", domain:"broadcom.com"},
@@ -12,7 +15,6 @@ const events = [
 
 const eventMap = {};
 function rebuildMap() {
-  // clear and rebuild map
   Object.keys(eventMap).forEach(k=> delete eventMap[k]);
   for (const ev of events) {
     if (!eventMap[ev.date]) eventMap[ev.date] = [];
@@ -34,6 +36,7 @@ function ymd(dateStr) { const [y,m,d] = dateStr.split('-').map(Number); return n
 const grid = document.getElementById('calendarGrid');
 const monthLabel = document.getElementById('monthLabel');
 const tooltip = document.getElementById('tooltip');
+const toastContainer = document.getElementById('toastContainer');
 
 function renderCalendar(date) {
   grid.innerHTML = '';
@@ -127,49 +130,107 @@ document.getElementById('today').addEventListener('click', () => {
   renderCalendar(viewDate);
 });
 
-// Add event button logic: fetch earnings date from MarketData.app (no key required)
-// If the fetch fails, user can manually enter date in a prompt as fallback.
+function showToast(type, text) {
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + (type || 'success');
+  toast.innerHTML = `<div class="icon">${type==='success'?'✓': type==='fallback' ? '⚑' : '!'}</div><div class="msg">${text}</div>`;
+  toastContainer.appendChild(toast);
+  requestAnimationFrame(()=> toast.classList.add('show'));
+  setTimeout(()=> {
+    toast.classList.remove('show');
+    setTimeout(()=> toast.remove(), 300);
+  }, 3200);
+}
+
+// Fetch sequence: MarketData.app -> Alpha Vantage -> prompt manual
+async function fetchEarningsForTicker(ticker) {
+  console.log(`Attempting MarketData.app for ${ticker}...`);
+  // MarketData.app
+  try {
+    const mdUrl = `https://api.marketdata.app/v1/stocks/earnings/${ticker}`;
+    const r = await fetch(mdUrl);
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.reportDate && data.reportDate.length>0) {
+        console.log(`✅ MarketData.app used for ${ticker}`);
+        showToast('success', `Fetched ${ticker} from MarketData`);
+        return {source:'marketdata', data};
+      }
+    }
+  } catch (e) {
+    console.warn('MarketData.app failed', e);
+  }
+
+  // Alpha Vantage fallback
+  try {
+    console.log(`Falling back to Alpha Vantage for ${ticker}...`);
+    const avUrl = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${ticker}&apikey=${ALPHA_VANTAGE_KEY}`;
+    const r2 = await fetch(avUrl);
+    if (r2.ok) {
+      const d2 = await r2.json();
+      let parsed = null;
+      if (d2 && Array.isArray(d2.earningsCalendar) && d2.earningsCalendar.length>0) parsed = d2.earningsCalendar[0];
+      else if (d2 && Array.isArray(d2) && d2.length>0) parsed = d2[0];
+      else if (d2 && d2[0]) parsed = d2[0];
+      if (parsed) {
+        console.log(`✅ Alpha Vantage used for ${ticker}`);
+        showToast('fallback', `Fetched ${ticker} from Alpha Vantage`);
+        return {source:'alphavantage', data:parsed};
+      }
+    }
+  } catch (e) {
+    console.warn('Alpha Vantage failed', e);
+  }
+
+  // both failed
+  return null;
+}
+
 document.getElementById('addBtn').addEventListener('click', async () => {
   const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
-  if (!ticker) {
-    alert('Please input a ticker symbol.');
-    return;
-  }
-  try {
-    // MarketData.app endpoint (public)
-    const apiUrl = `https://api.marketdata.app/v1/stocks/earnings/${ticker}`;
-    const resp = await fetch(apiUrl);
-    if (!resp.ok) throw new Error('API fetch failed: ' + resp.status);
-    const data = await resp.json();
-    // data.reportDate expected as array of epoch seconds
-    if (!data.reportDate || data.reportDate.length === 0) {
-      throw new Error('No earnings data found from API');
-    }
+  if (!ticker) { alert('Please input a ticker symbol.'); return; }
+  const fetched = await fetchEarningsForTicker(ticker);
+  if (fetched && fetched.source==='marketdata') {
+    const data = fetched.data;
     const nextDateUnix = data.reportDate[0];
     const nextDate = new Date(nextDateUnix * 1000);
-    const y = nextDate.getFullYear(),
-          m = String(nextDate.getMonth()+1).padStart(2, '0'),
-          d = String(nextDate.getDate()).padStart(2, '0');
+    const y = nextDate.getFullYear(), m = String(nextDate.getMonth()+1).padStart(2,'0'), d = String(nextDate.getDate()).padStart(2,'0');
     const iso = `${y}-${m}-${d}`;
     const time = (data.reportTime && data.reportTime[0]) ? data.reportTime[0] : 'TBD';
-    // guess domain for Clearbit logo
     const domain = guessDomain(ticker);
-
-    const newEv = {
-      symbol: ticker,
-      name: ticker,
-      date: iso,
-      time: time,
-      domain: domain
-    };
+    const newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
     events.push(newEv);
     rebuildMap();
     renderCalendar(viewDate);
-    alert(`Added ${ticker} on ${iso} (${time})`);
-  } catch (err) {
-    console.error(err);
-    // fallback: let user enter date manually
-    const manual = prompt('Could not fetch earnings automatically. Enter date manually (YYYY-MM-DD) or Cancel:');
+    console.log(`Added ${ticker} on ${iso} (MarketData)`);
+  } else if (fetched && fetched.source==='alphavantage') {
+    const d = fetched.data;
+    let iso = null, time='TBD';
+    if (d.reportDate) {
+      const dt = new Date(Number(d.reportDate)*1000);
+      iso = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    } else if (d.reportDateLocal) {
+      iso = d.reportDateLocal.split('T')[0];
+    } else if (d.date) {
+      iso = d.date;
+    } else if (d.fiscalDateEnding) {
+      iso = d.fiscalDateEnding;
+    } else if (d.reportDateString) {
+      iso = d.reportDateString;
+    }
+    if (!iso) {
+      const manual = prompt(`Alpha Vantage returned data but I couldn't parse the date for ${ticker}. Enter date manually (YYYY-MM-DD):`);
+      if (!manual) { showToast('error', `No date for ${ticker}`); return; }
+      iso = manual.trim();
+    }
+    const domain = guessDomain(ticker);
+    const newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
+    events.push(newEv);
+    rebuildMap();
+    renderCalendar(viewDate);
+    console.log(`Added ${ticker} on ${iso} (Alpha Vantage)`);
+  } else {
+    const manual = prompt(`Could not fetch earnings automatically for ${ticker}. Enter date manually (YYYY-MM-DD) or Cancel:`);
     if (manual) {
       const iso = manual.trim();
       const domain = guessDomain(ticker);
@@ -177,15 +238,16 @@ document.getElementById('addBtn').addEventListener('click', async () => {
       events.push(newEv);
       rebuildMap();
       renderCalendar(viewDate);
-      alert(`Added ${ticker} on ${iso} (manual)`);
+      showToast('error', `Manual entry added for ${ticker}`);
+      console.log(`Manual entry for ${ticker} on ${iso}`);
     } else {
-      alert('No event added.');
+      showToast('error', `No data for ${ticker}`);
+      console.log(`No data added for ${ticker}`);
     }
   }
 });
 
 function guessDomain(ticker){
-  // simple heuristics map for common tickers (extendable)
   const map = {
     'AAPL':'apple.com','NVDA':'nvidia.com','AMD':'amd.com','TSM':'tsmc.com',
     'AVGO':'broadcom.com','SNOW':'snowflake.com','PYPL':'paypal.com','AGO':'assuredguaranty.com'

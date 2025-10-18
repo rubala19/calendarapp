@@ -1,5 +1,5 @@
 :root{
-  --bg:#f7f8fb; --card:#fff; --muted:#6b7280; --accent:#0f172a;
+  --bg:#f7f8fb; --card:#fff; --muted:#9aa3b2; --accent:#0f172a;
 }
 body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; margin:24px; background:var(--bg); color:var(--accent)}
 .container{max-width:1100px;margin:0 auto}
@@ -34,3 +34,13 @@ button{background:#111827;color:#fff;border:0;padding:8px 10px;border-radius:6px
   .cell{min-height:90px}
   .ev img{width:24px;height:24px}
 }
+
+/* Toast (dark translucent style) */
+.toast-container{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:10px;z-index:2000;max-width:320px}
+.toast{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;backdrop-filter:blur(6px);box-shadow:0 8px 24px rgba(2,6,23,0.5);color:#fff;font-size:13px;opacity:0;transform:translateY(8px);transition:all 260ms ease}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.success{background:linear-gradient(90deg,#1f2937,#0f172a)}
+.toast.fallback{background:linear-gradient(90deg,#0b3b6f,#071a2e)}
+.toast.error{background:linear-gradient(90deg,#4b1f1f,#2b0e0e)}
+.toast .icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;background:rgba(255,255,255,0.06)}
+.toast .msg{flex:1}

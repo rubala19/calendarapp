@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Earnings Calendar — Static Prototype</title>
+<title>Earnings Calendar — v2</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
   <header>
     <div>
       <h1>Earnings Calendar</h1>
-      <div class="subtitle">Visual calendar view with company logos — static prototype</div>
+      <div class="subtitle">Visual calendar with auto-fetch (MarketData.app → Alpha Vantage) — v2</div>
     </div>
     <div class="controls">
       <button id="prev" title="Previous month">←</button>
@@ -40,6 +40,9 @@
     <div class="footer">Tip: you can add any ticker above and it will try to fetch the next earnings automatically.</div>
   </div>
 </div>
+
+<!-- toast container -->
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
 <div id="tooltip" class="tooltip" aria-hidden="true"></div>
 
