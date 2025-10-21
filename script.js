@@ -1,8 +1,8 @@
 // Alpha Vantage key (fallback)
 const ALPHA_VANTAGE_KEY = "8NS6OXY29LA15EEF";
 
-// Preloaded events
-const events = [
+// Preloaded events (fallback if bin empty)
+const preloadedEvents = [
   {symbol:"AVGO", name:"Broadcom Inc.", date:"2025-09-04", time:"Est. (After close)", domain:"broadcom.com"},
   {symbol:"TSM",  name:"TSMC (Taiwan Semiconductor)", date:"2025-10-16", time:"Before market open", domain:"tsmc.com"},
   {symbol:"AMD",  name:"Advanced Micro Devices", date:"2025-11-04", time:"After market close", domain:"amd.com"},
@@ -13,6 +13,7 @@ const events = [
   {symbol:"NVDA", name:"NVIDIA Corporation", date:"2025-11-19", time:"After market close", domain:"nvidia.com"}
 ];
 
+let events = []; // will be populated from backend or fallback to preloaded
 const eventMap = {};
 function rebuildMap() {
   Object.keys(eventMap).forEach(k=> delete eventMap[k]);
@@ -24,7 +25,6 @@ function rebuildMap() {
     eventMap[d].sort((a,b)=> a.symbol.localeCompare(b.symbol));
   }
 }
-rebuildMap();
 
 let viewDate = new Date();
 
@@ -74,7 +74,7 @@ function renderCalendar(date) {
       img.src = logoUrl;
       img.alt = ev.symbol;
       img.onerror = () => {
-        img.src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect fill="%23f3f4f6" width="100%" height="100%"/><text x="50%" y="55%" font-size="10" text-anchor="middle" fill="%234b5563" font-family="Arial" dy=".3em">${ev.symbol}</text></svg>`;
+        img.src = `data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\"><rect fill=\"%23f3f4f6\" width=\"100%\" height=\"100%\"/><text x=\"50%\" y=\"55%\" font-size=\"10\" text-anchor=\"middle\" fill=\"%234b5563\" font-family=\"Arial\" dy=\".3em\">${ev.symbol}</text></svg>`;
       };
 
       const txt = document.createElement('div');
@@ -186,10 +186,68 @@ async function fetchEarningsForTicker(ticker) {
   return null;
 }
 
+// Backend endpoints for JSONBin persistence
+const API_EVENTS = '/api/events';
+
+// Load events from backend
+async function loadEventsFromBackend() {
+  try {
+    const r = await fetch(API_EVENTS);
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j)) {
+        events = j;
+        rebuildMap();
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load events from backend', e);
+  }
+  return false;
+}
+
+// Save full events array to backend (PUT)
+async function saveEventsToBackend(allEvents) {
+  try {
+    const r = await fetch(API_EVENTS, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({events: allEvents})
+    });
+    if (r.ok) {
+      const j = await r.json();
+      return j;
+    }
+  } catch (e) {
+    console.warn('Failed to save events to backend', e);
+  }
+  return null;
+}
+
+// Add event via backend (POST)
+async function postEventToBackend(ev) {
+  try {
+    const r = await fetch(API_EVENTS, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(ev)
+    });
+    if (r.ok) {
+      const j = await r.json();
+      return j;
+    }
+  } catch (e) {
+    console.warn('Failed to post event to backend', e);
+  }
+  return null;
+}
+
 document.getElementById('addBtn').addEventListener('click', async () => {
   const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
   if (!ticker) { alert('Please input a ticker symbol.'); return; }
   const fetched = await fetchEarningsForTicker(ticker);
+  let newEv = null;
   if (fetched && fetched.source==='marketdata') {
     const data = fetched.data;
     const nextDateUnix = data.reportDate[0];
@@ -198,11 +256,16 @@ document.getElementById('addBtn').addEventListener('click', async () => {
     const iso = `${y}-${m}-${d}`;
     const time = (data.reportTime && data.reportTime[0]) ? data.reportTime[0] : 'TBD';
     const domain = guessDomain(ticker);
-    const newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
-    events.push(newEv);
-    rebuildMap();
-    renderCalendar(viewDate);
-    console.log(`Added ${ticker} on ${iso} (MarketData)`);
+    newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
+    // persist via backend
+    const res = await postEventToBackend(newEv);
+    if (res && Array.isArray(res)) {
+      events = res;
+      rebuildMap();
+      renderCalendar(viewDate);
+      console.log(`Added ${ticker} on ${iso} (MarketData -> backend)`);
+      return;
+    }
   } else if (fetched && fetched.source==='alphavantage') {
     const d = fetched.data;
     let iso = null, time='TBD';
@@ -224,26 +287,44 @@ document.getElementById('addBtn').addEventListener('click', async () => {
       iso = manual.trim();
     }
     const domain = guessDomain(ticker);
-    const newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
-    events.push(newEv);
-    rebuildMap();
-    renderCalendar(viewDate);
-    console.log(`Added ${ticker} on ${iso} (Alpha Vantage)`);
+    newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
+    const res = await postEventToBackend(newEv);
+    if (res && Array.isArray(res)) {
+      events = res;
+      rebuildMap();
+      renderCalendar(viewDate);
+      console.log(`Added ${ticker} on ${iso} (AlphaV -> backend)`);
+      return;
+    }
   } else {
     const manual = prompt(`Could not fetch earnings automatically for ${ticker}. Enter date manually (YYYY-MM-DD) or Cancel:`);
     if (manual) {
       const iso = manual.trim();
       const domain = guessDomain(ticker);
-      const newEv = {symbol:ticker,name:ticker,date:iso,time:'TBD',domain:domain};
-      events.push(newEv);
-      rebuildMap();
-      renderCalendar(viewDate);
-      showToast('error', `Manual entry added for ${ticker}`);
-      console.log(`Manual entry for ${ticker} on ${iso}`);
+      newEv = {symbol:ticker,name:ticker,date:iso,time:'TBD',domain:domain};
+      const res = await postEventToBackend(newEv);
+      if (res && Array.isArray(res)) {
+        events = res;
+        rebuildMap();
+        renderCalendar(viewDate);
+        showToast('error', `Manual entry added for ${ticker}`);
+        console.log(`Manual entry for ${ticker} on ${iso}`);
+        return;
+      }
     } else {
       showToast('error', `No data for ${ticker}`);
       console.log(`No data added for ${ticker}`);
+      return;
     }
+  }
+
+  // If backend failed, fall back to local add
+  if (newEv) {
+    events.push(newEv);
+    rebuildMap();
+    renderCalendar(viewDate);
+    showToast('error', 'Added locally (backend failed)');
+    console.log('Backend failed; added locally.');
   }
 });
 
@@ -255,12 +336,17 @@ function guessDomain(ticker){
   return map[ticker] || (ticker.toLowerCase() + '.com');
 }
 
-(function init(){
+// initialize: try to load from backend, else use preloadedEvents
+(async function init(){
+  const ok = await loadEventsFromBackend();
+  if (!ok) {
+    events = preloadedEvents.slice();
+    rebuildMap();
+  }
   if (events.length){
     const min = events.reduce((a,b)=> a.date < b.date ? a : b).date;
     const dt = ymd(min);
     viewDate = new Date(dt.getFullYear(), dt.getMonth(), 1);
   }
-  rebuildMap();
   renderCalendar(viewDate);
 })();
