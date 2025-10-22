@@ -1,87 +1,79 @@
-// Force Node runtime (important for Vercel)
-export const config = { runtime: "nodejs" };
+// /api/events.js
+import axios from "axios";
 
-// Optional: import your Alpha Vantage fetch helper
-// or inline it below
-async function fetchEarningsAlphaVantage(ticker, apiKey) {
-  try {
-    const url = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${ticker}&horizon=3month&apikey=${apiKey}`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
-    const text = await res.text();
+const BIN_ID = "68f7ee9c43b1c97be976b0cb";
+const MASTER_KEY = "$2a$10$BTJdm.bIPexVRHa49b2hve5ePA8cSigwLNdBWRzxo6fb4cSy53p3u";
+const ALPHAVANTAGE_KEY = "8NS6OXY29LA15EEF";
 
-    console.log(`[AlphaVantage] ${ticker} response:`, text.slice(0, 100));
-
-    if (!text.includes("reportDate")) throw new Error("Invalid response from Alpha Vantage");
-    const lines = text.trim().split("\n");
-    if (lines.length <= 1) return null;
-
-    const row = lines[1].split(",");
-    const [symbol, name, reportDate, fiscalDateEnding, estimate, currency] = row;
-    if (!reportDate || reportDate === "None") return null;
-
-    return {
-      symbol: symbol || ticker.toUpperCase(),
-      name: name || ticker.toUpperCase(),
-      date: reportDate,
-      fiscalDateEnding,
-      estimate,
-      currency,
-      source: "AlphaVantage",
-    };
-  } catch (err) {
-    console.error(`[AlphaVantage Error] ${ticker}:`, err.message);
-    return null;
-  }
-}
+const JSONBIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+const ALPHAVANTAGE_URL = "https://www.alphavantage.co/query";
 
 export default async function handler(req, res) {
-  console.log("🚀 /api/events called with method:", req.method);
-
-  const ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_KEY;
-  const JSONBIN_ID = process.env.JSONBIN_ID;
-  const JSONBIN_KEY = process.env.JSONBIN_KEY;
-
-  if (!ALPHAVANTAGE_KEY || !JSONBIN_ID || !JSONBIN_KEY) {
-    console.error("❌ Missing required environment variables");
-    return res.status(500).json({ error: "Server misconfigured: missing API keys" });
-  }
-
-  // ---- GET: Fetch events from JSONBin ----
-  if (req.method === "GET") {
-    try {
-      const jsonResp = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-        headers: {
-          "X-Master-Key": JSONBIN_KEY,
-          "User-Agent": "Mozilla/5.0",
-        },
+  try {
+    if (req.method === "GET") {
+      // Fetch current events list
+      const bin = await axios.get(JSONBIN_URL, {
+        headers: { "X-Master-Key": MASTER_KEY },
       });
+      return res.status(200).json(bin.data.record || []);
+    }
 
-      if (!jsonResp.ok) {
-        const txt = await jsonResp.text();
-        console.error("❌ JSONBin GET failed:", txt);
-        throw new Error(`JSONBin GET failed (${jsonResp.status})`);
+    if (req.method === "POST") {
+      const { symbol, date } = req.body;
+      if (!symbol) return res.status(400).json({ error: "Symbol required" });
+
+      // Lookup earnings date if not provided
+      let earningsDate = date;
+      let source = "manual";
+
+      if (!earningsDate) {
+        try {
+          const resp = await axios.get(ALPHAVANTAGE_URL, {
+            params: {
+              function: "EARNINGS_CALENDAR",
+              symbol,
+              apikey: ALPHAVANTAGE_KEY,
+            },
+          });
+
+          const item = resp.data?.earningsCalendar?.[0];
+          if (item?.reportDate) {
+            earningsDate = item.reportDate;
+            source = "AlphaVantage";
+          }
+        } catch (err) {
+          console.warn("AlphaVantage lookup failed, using fallback");
+        }
       }
 
-      const data = await jsonResp.json();
-      console.log("✅ JSONBin fetched records:", Array.isArray(data.record) ? data.record.length : typeof data.record);
+      if (!earningsDate) {
+        earningsDate = "TBD";
+        source = "fallback";
+      }
 
-      return res.status(200).json({ events: data.record || [] });
-    } catch (err) {
-      console.error("⚠️ Error fetching JSONBin:", err.message);
-      return res.status(500).json({ error: err.message });
+      // Read, update, write to JSONBin
+      const { data } = await axios.get(JSONBIN_URL, {
+        headers: { "X-Master-Key": MASTER_KEY },
+      });
+
+      let events = data.record;
+      if (!Array.isArray(events)) events = [];
+
+      events.push({ symbol, date: earningsDate, source });
+      events.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      await axios.put(
+        JSONBIN_URL,
+        events,
+        { headers: { "X-Master-Key": MASTER_KEY, "Content-Type": "application/json" } }
+      );
+
+      return res.status(200).json({ success: true, symbol, date: earningsDate, source });
     }
+
+    return res.status(405).json({ error: "Method not allowed" });
+  } catch (err) {
+    console.error("API error:", err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
-
-  // ---- POST: Add new event ----
-  if (req.method === "POST") {
-    try {
-      const { ticker } = await req.json();
-      if (!ticker) return res.status(400).json({ error: "Missing ticker symbol" });
-
-      console.log("➕ Adding new event for:", ticker);
-
-      // Step 1. Fetch existing events
-      const existingRe
+}
