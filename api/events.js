@@ -1,110 +1,87 @@
-// /api/events.js
-import { fetchEarningsAlphaVantage } from "../utils/fetchEarnings.js";
+// Force Node runtime (important for Vercel)
+export const config = { runtime: "nodejs" };
 
-export default async function handler(req, res) {
-  const BIN_ID = process.env.JSONBIN_ID;
-  const BIN_KEY = process.env.JSONBIN_KEY;
-  const AV_KEY = process.env.ALPHAVANTAGE_KEY;
-  const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-
-  if (!BIN_ID || !BIN_KEY) {
-    return res.status(500).json({ error: "Missing JSONBin credentials" });
-  }
-
-  // 🔹 helper to safely load events from JSONBin
-  async function loadEvents() {
-    const resp = await fetch(`${BASE_URL}/latest`, {
-      headers: { "X-Master-Key": BIN_KEY },
-    });
-    const json = await resp.json();
-
-    let events = [];
-    if (Array.isArray(json.record)) {
-      events = json.record;
-    } else if (json.record && Array.isArray(json.record.data)) {
-      events = json.record.data;
-    }
-    if (!Array.isArray(events)) events = [];
-    return events;
-  }
-
-  // 🔹 helper to save events back
-  async function saveEvents(events) {
-    await fetch(BASE_URL, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Master-Key": BIN_KEY,
-      },
-      body: JSON.stringify(events),
-    });
-  }
-
+// Optional: import your Alpha Vantage fetch helper
+// or inline it below
+async function fetchEarningsAlphaVantage(ticker, apiKey) {
   try {
-    // 🟢 GET: fetch all saved events
-    if (req.method === "GET") {
-      const events = await loadEvents();
-      return res.status(200).json(events);
-    }
+    const url = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${ticker}&horizon=3month&apikey=${apiKey}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    const text = await res.text();
 
-    // 🟢 POST: add ticker, lookup earnings, append, persist
-    if (req.method === "POST") {
-      const { symbol } = req.body;
-      if (!symbol)
-        return res.status(400).json({ error: "Missing symbol in request" });
+    console.log(`[AlphaVantage] ${ticker} response:`, text.slice(0, 100));
 
-      let events = await loadEvents();
+    if (!text.includes("reportDate")) throw new Error("Invalid response from Alpha Vantage");
+    const lines = text.trim().split("\n");
+    if (lines.length <= 1) return null;
 
-      // If event already exists, skip fetch
-      const exists = events.find(
-        (e) => e.symbol.toUpperCase() === symbol.toUpperCase()
-      );
-      if (exists) return res.status(200).json({ success: true, event: exists });
+    const row = lines[1].split(",");
+    const [symbol, name, reportDate, fiscalDateEnding, estimate, currency] = row;
+    if (!reportDate || reportDate === "None") return null;
 
-      // 🔍 Try Alpha Vantage lookup
-      let newEvent = null;
-      try {
-        const apiUrl = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${symbol}&horizon=3month&apikey=${AV_KEY}`;
-        const r = await fetch(apiUrl);
-        const text = await r.text();
-
-        const lines = text.trim().split("\n");
-        if (lines.length > 1) {
-          const first = lines[1].split(",");
-          const [sym, name, reportDate, fiscalEnd, estimate, currency] = first;
-          if (reportDate && reportDate !== "None") {
-            newEvent = {
-              symbol: sym || symbol.toUpperCase(),
-              name: name || symbol.toUpperCase(),
-              date: reportDate,
-              fiscalDateEnding: fiscalEnd,
-              estimate,
-              currency,
-              source: "AlphaVantage",
-            };
-          }
-        }
-      } catch (err) {
-        console.error("AlphaVantage fetch failed:", err);
-      }
-
-      if (!newEvent) {
-        return res
-          .status(404)
-          .json({ error: "No earnings date found for symbol" });
-      }
-
-      // Append + persist
-      events.push(newEvent);
-      await saveEvents(events);
-
-      return res.status(200).json({ success: true, event: newEvent });
-    }
-
-    res.setHeader("Allow", ["GET", "POST"]);
-    return res.status(405).end(`Method ${req.method} Not Allowed`);
+    return {
+      symbol: symbol || ticker.toUpperCase(),
+      name: name || ticker.toUpperCase(),
+      date: reportDate,
+      fiscalDateEnding,
+      estimate,
+      currency,
+      source: "AlphaVantage",
+    };
   } catch (err) {
-    console.error("Server error:", err);
-    return res.status(500).json({ error: err.message });
+    console.error(`[AlphaVantage Error] ${ticker}:`, err.message);
+    return null;
   }
 }
+
+export default async function handler(req, res) {
+  console.log("🚀 /api/events called with method:", req.method);
+
+  const ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_KEY;
+  const JSONBIN_ID = process.env.JSONBIN_ID;
+  const JSONBIN_KEY = process.env.JSONBIN_KEY;
+
+  if (!ALPHAVANTAGE_KEY || !JSONBIN_ID || !JSONBIN_KEY) {
+    console.error("❌ Missing required environment variables");
+    return res.status(500).json({ error: "Server misconfigured: missing API keys" });
+  }
+
+  // ---- GET: Fetch events from JSONBin ----
+  if (req.method === "GET") {
+    try {
+      const jsonResp = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+        headers: {
+          "X-Master-Key": JSONBIN_KEY,
+          "User-Agent": "Mozilla/5.0",
+        },
+      });
+
+      if (!jsonResp.ok) {
+        const txt = await jsonResp.text();
+        console.error("❌ JSONBin GET failed:", txt);
+        throw new Error(`JSONBin GET failed (${jsonResp.status})`);
+      }
+
+      const data = await jsonResp.json();
+      console.log("✅ JSONBin fetched records:", Array.isArray(data.record) ? data.record.length : typeof data.record);
+
+      return res.status(200).json({ events: data.record || [] });
+    } catch (err) {
+      console.error("⚠️ Error fetching JSONBin:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // ---- POST: Add new event ----
+  if (req.method === "POST") {
+    try {
+      const { ticker } = await req.json();
+      if (!ticker) return res.status(400).json({ error: "Missing ticker symbol" });
+
+      console.log("➕ Adding new event for:", ticker);
+
+      // Step 1. Fetch existing events
+      const existingRe
