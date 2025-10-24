@@ -9,6 +9,7 @@ export default function Home() {
   const [events, setEvents] = useState([]);
   const [symbol, setSymbol] = useState('');
   const [date, setDate] = useState(new Date());
+  const debug = process.env.NEXT_PUBLIC_DEBUG === 'true';
 
   useEffect(() => {
     loadEvents();
@@ -20,6 +21,7 @@ export default function Home() {
       if (!res.ok) throw new Error('Failed to load events');
       const data = await res.json();
       setEvents(data || []);
+      if (debug) console.log('[Client] Loaded events:', data);
     } catch (err) {
       console.error('Load events error', err);
       toast.error('Failed to load events');
