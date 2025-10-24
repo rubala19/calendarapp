@@ -1,17 +1,10 @@
-# Earnings Calendar — v2 (MarketData + Alpha Vantage fallback)
+Earnings Calendar - Next.js serverless project
+---------------------------------------------
+- Put your keys in .env.local when running locally or in Vercel Environment Variables:
+  ALPHAVANTAGE_KEY, JSONBIN_BIN_ID, JSONBIN_MASTER_KEY
 
-This static prototype includes:
-- Preloaded tickers (AVGO, TSM, AMD, AAPL, SNOW, AGO, PYPL, NVDA)
-- Add / Fetch Earnings: MarketData.app primary, Alpha Vantage fallback (embedded key)
-- Dark translucent toast notifications (bottom-right)
-- Manual prompt fallback if both APIs fail
+- To run locally:
+  npm install
+  npm run dev
 
-## Files
-- index.html
-- style.css
-- script.js
-- README.md
-
-## Notes
-- Alpha Vantage API key is embedded in script.js. Replace `ALPHA_VANTAGE_KEY` if you want to use another key.
-- For production, consider moving API calls to a small backend to hide API keys and avoid CORS/rate limits.
+- Deploy to Vercel: push to GitHub and import the repo into Vercel (Next.js will be detected).
