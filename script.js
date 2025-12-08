@@ -1,6 +1,3 @@
-// Alpha Vantage key (fallback)
-const ALPHA_VANTAGE_KEY = "8NS6OXY29LA15EEF";
-
 // Preloaded events (fallback if bin empty)
 const preloadedEvents = [
   {symbol:"AVGO", name:"Broadcom Inc.", date:"2025-09-04", time:"Est. (After close)", domain:"broadcom.com"},
@@ -142,97 +139,65 @@ function showToast(type, text) {
   }, 3200);
 }
 
-// IMPROVED: Better error handling with detailed logging
+// UPDATED: Use your backend endpoint instead of calling APIs directly
 async function fetchEarningsForTicker(ticker) {
-  console.log(`[FETCH START] Attempting to fetch earnings for: ${ticker}`);
+  console.log(`[FETCH START] Fetching earnings for ${ticker} via backend...`);
   
-  // MarketData.app
   try {
-    console.log(`[MARKETDATA] Calling MarketData.app API...`);
-    const mdUrl = `https://api.marketdata.app/v1/stocks/earnings/${ticker}`;
-    const r = await fetch(mdUrl);
-    console.log(`[MARKETDATA] Response status: ${r.status}`);
+    const url = `/api/fetchEarnings?symbol=${ticker}`;
+    console.log(`[FETCH] Calling: ${url}`);
     
-    if (r.ok) {
-      const data = await r.json();
-      console.log(`[MARKETDATA] Response data:`, data);
-      
-      if (data && data.reportDate && data.reportDate.length>0) {
-        console.log(`[MARKETDATA] ✅ Success! Found earnings data for ${ticker}`);
-        showToast('success', `Fetched ${ticker} from MarketData`);
-        return {source:'marketdata', data};
-      } else {
-        console.log(`[MARKETDATA] No reportDate in response`);
-      }
-    } else {
-      const errorText = await r.text();
-      console.warn(`[MARKETDATA] Failed with status ${r.status}:`, errorText);
-      if (r.status === 429) {
-        showToast('error', 'Rate limit reached on MarketData API');
-      } else if (r.status === 404) {
-        console.log(`[MARKETDATA] ${ticker} not found, trying fallback...`);
-      }
-    }
-  } catch (e) {
-    console.error('[MARKETDATA] Exception:', e);
-    showToast('fallback', `MarketData unavailable, trying backup...`);
-  }
-
-  // Alpha Vantage fallback
-  try {
-    console.log(`[ALPHAVANTAGE] Calling Alpha Vantage API...`);
-    const avUrl = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${ticker}&apikey=${ALPHA_VANTAGE_KEY}`;
-    const r2 = await fetch(avUrl);
-    console.log(`[ALPHAVANTAGE] Response status: ${r2.status}`);
+    const response = await fetch(url);
+    console.log(`[FETCH] Response status: ${response.status}`);
     
-    if (r2.ok) {
-      const d2 = await r2.json();
-      console.log(`[ALPHAVANTAGE] Response data:`, d2);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[FETCH] Error response (${response.status}):`, errorText);
       
-      // Check for API error responses
-      if (d2.Note) {
-        console.warn('[ALPHAVANTAGE] Rate limit note:', d2.Note);
-        showToast('error', 'Alpha Vantage API rate limit reached');
-        return null;
-      }
-      if (d2.Error || d2['Error Message']) {
-        console.error('[ALPHAVANTAGE] API Error:', d2.Error || d2['Error Message']);
-        showToast('error', `Alpha Vantage error: ${d2.Error || d2['Error Message']}`);
-        return null;
-      }
-      
-      let parsed = null;
-      if (d2 && Array.isArray(d2.earningsCalendar) && d2.earningsCalendar.length>0) parsed = d2.earningsCalendar[0];
-      else if (d2 && Array.isArray(d2) && d2.length>0) parsed = d2[0];
-      else if (d2 && d2[0]) parsed = d2[0];
-      
-      if (parsed) {
-        console.log(`[ALPHAVANTAGE] ✅ Success! Parsed data:`, parsed);
-        showToast('fallback', `Fetched ${ticker} from Alpha Vantage`);
-        return {source:'alphavantage', data:parsed};
+      if (response.status === 404) {
+        showToast('error', `Endpoint not found - check your API setup`);
+      } else if (response.status === 429) {
+        showToast('error', 'Rate limit reached - try again later');
+      } else if (response.status === 500) {
+        showToast('error', `Server error: ${errorText.substring(0, 100)}`);
       } else {
-        console.log('[ALPHAVANTAGE] Could not parse earnings data from response');
+        showToast('error', `Failed to fetch ${ticker} (${response.status})`);
       }
-    } else {
-      const errorText = await r2.text();
-      console.error(`[ALPHAVANTAGE] Failed with status ${r2.status}:`, errorText);
-      showToast('error', `Alpha Vantage returned error ${r2.status}`);
+      return null;
     }
+    
+    const data = await response.json();
+    console.log(`[FETCH] Response data:`, data);
+    
+    // Check if backend returned an error
+    if (data.error) {
+      console.error(`[FETCH] Backend error:`, data.error);
+      showToast('error', `Error: ${data.error}`);
+      return null;
+    }
+    
+    // Check if we got earnings data
+    if (data.date) {
+      console.log(`[FETCH] ✅ Success! Found earnings data for ${ticker}`);
+      showToast('success', `Found earnings for ${ticker}`);
+      return data;
+    } else {
+      console.warn(`[FETCH] No earnings data in response`);
+      showToast('error', `No earnings data found for ${ticker}`);
+      return null;
+    }
+    
   } catch (e) {
-    console.error('[ALPHAVANTAGE] Exception:', e);
-    showToast('error', `Alpha Vantage unavailable: ${e.message}`);
+    console.error('[FETCH] Exception:', e);
+    showToast('error', `Network error: ${e.message}`);
+    return null;
   }
-
-  // both failed
-  console.error(`[FETCH END] Could not find earnings data for ${ticker} from any source`);
-  showToast('error', `Could not find earnings data for ${ticker}`);
-  return null;
 }
 
 // Backend endpoints for JSONBin persistence
 const API_EVENTS = '/api/events';
 
-// IMPROVED: Better error handling with detailed logging
+// Load events from backend
 async function loadEventsFromBackend() {
   console.log('[BACKEND] Loading events from backend...');
   try {
@@ -262,7 +227,7 @@ async function loadEventsFromBackend() {
   return false;
 }
 
-// IMPROVED: Detailed logging for save operations
+// Save full events array to backend (PUT)
 async function saveEventsToBackend(allEvents) {
   console.log('[BACKEND] Saving events to backend:', allEvents);
   try {
@@ -280,7 +245,7 @@ async function saveEventsToBackend(allEvents) {
     } else {
       const errorText = await r.text();
       console.error(`[BACKEND] Save failed with status ${r.status}:`, errorText);
-      showToast('error', `Failed to save events (${r.status}): ${errorText.substring(0, 100)}`);
+      showToast('error', `Failed to save (${r.status})`);
     }
   } catch (e) {
     console.error('[BACKEND] Save exception:', e);
@@ -289,7 +254,7 @@ async function saveEventsToBackend(allEvents) {
   return null;
 }
 
-// IMPROVED: Detailed logging for post operations
+// Add event via backend (POST)
 async function postEventToBackend(ev) {
   console.log('[BACKEND] Posting event to backend:', ev);
   try {
@@ -307,7 +272,7 @@ async function postEventToBackend(ev) {
     } else {
       const errorText = await r.text();
       console.error(`[BACKEND] Post failed with status ${r.status}:`, errorText);
-      showToast('error', `Failed to add event (${r.status}): ${errorText.substring(0, 100)}`);
+      showToast('error', `Failed to add event (${r.status})`);
     }
   } catch (e) {
     console.error('[BACKEND] Post exception:', e);
@@ -329,7 +294,15 @@ function validateTicker(ticker) {
   return true;
 }
 
-// IMPROVED: Detailed step-by-step logging
+function guessDomain(ticker){
+  const map = {
+    'AAPL':'apple.com','NVDA':'nvidia.com','AMD':'amd.com','TSM':'tsmc.com',
+    'AVGO':'broadcom.com','SNOW':'snowflake.com','PYPL':'paypal.com','AGO':'assuredguaranty.com'
+  };
+  return map[ticker] || (ticker.toLowerCase() + '.com');
+}
+
+// UPDATED: Simplified add button logic using backend endpoint
 document.getElementById('addBtn').addEventListener('click', async () => {
   console.log('\n========== ADD BUTTON CLICKED ==========');
   const tickerInput = document.getElementById('tickerInput');
@@ -354,134 +327,81 @@ document.getElementById('addBtn').addEventListener('click', async () => {
   addBtn.style.cursor = 'not-allowed';
   
   try {
-    console.log('[ADD] Fetching earnings data...');
-    const fetched = await fetchEarningsForTicker(ticker);
-    console.log('[ADD] Fetch result:', fetched);
+    console.log('[ADD] Fetching earnings data from backend...');
+    const earningsData = await fetchEarningsForTicker(ticker);
+    console.log('[ADD] Earnings data received:', earningsData);
     
-    let newEv = null;
-    
-    if (fetched && fetched.source==='marketdata') {
-      console.log('[ADD] Processing MarketData response...');
-      const data = fetched.data;
-      const nextDateUnix = data.reportDate[0];
-      const nextDate = new Date(nextDateUnix * 1000);
-      const y = nextDate.getFullYear(), m = String(nextDate.getMonth()+1).padStart(2,'0'), d = String(nextDate.getDate()).padStart(2,'0');
-      const iso = `${y}-${m}-${d}`;
-      const time = (data.reportTime && data.reportTime[0]) ? data.reportTime[0] : 'TBD';
-      const domain = guessDomain(ticker);
-      newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
-      console.log('[ADD] Created event object:', newEv);
-      
-      console.log('[ADD] Posting to backend...');
-      const res = await postEventToBackend(newEv);
-      console.log('[ADD] Backend post result:', res);
-      
-      if (res && Array.isArray(res)) {
-        console.log('[ADD] ✅ Successfully added via MarketData -> backend');
-        events = res;
-        rebuildMap();
-        renderCalendar(viewDate);
-        tickerInput.value = '';
-        return;
-      } else {
-        console.warn('[ADD] Backend post did not return array');
-      }
-      
-    } else if (fetched && fetched.source==='alphavantage') {
-      console.log('[ADD] Processing AlphaVantage response...');
-      const d = fetched.data;
-      let iso = null, time='TBD';
-      
-      if (d.reportDate) {
-        const dt = new Date(Number(d.reportDate)*1000);
-        iso = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      } else if (d.reportDateLocal) {
-        iso = d.reportDateLocal.split('T')[0];
-      } else if (d.date) {
-        iso = d.date;
-      } else if (d.fiscalDateEnding) {
-        iso = d.fiscalDateEnding;
-      } else if (d.reportDateString) {
-        iso = d.reportDateString;
-      }
-      
-      console.log('[ADD] Parsed date:', iso);
-      
-      if (!iso) {
-        console.log('[ADD] Could not parse date, prompting user...');
-        const manual = prompt(`Alpha Vantage returned data but I couldn't parse the date for ${ticker}. Enter date manually (YYYY-MM-DD):`);
-        if (!manual) { 
-          console.log('[ADD] User cancelled date input');
-          showToast('error', `No date provided for ${ticker}`); 
-          return; 
-        }
-        iso = manual.trim();
-        console.log('[ADD] User entered date:', iso);
-      }
-      
-      const domain = guessDomain(ticker);
-      newEv = {symbol:ticker,name:ticker,date:iso,time:time,domain:domain};
-      console.log('[ADD] Created event object:', newEv);
-      
-      console.log('[ADD] Posting to backend...');
-      const res = await postEventToBackend(newEv);
-      console.log('[ADD] Backend post result:', res);
-      
-      if (res && Array.isArray(res)) {
-        console.log('[ADD] ✅ Successfully added via AlphaVantage -> backend');
-        events = res;
-        rebuildMap();
-        renderCalendar(viewDate);
-        tickerInput.value = '';
-        return;
-      } else {
-        console.warn('[ADD] Backend post did not return array');
-      }
-      
-    } else {
-      console.log('[ADD] No data from APIs, prompting for manual entry...');
+    if (!earningsData || !earningsData.date) {
+      console.log('[ADD] No valid earnings data, prompting for manual entry...');
       const manual = prompt(`Could not fetch earnings automatically for ${ticker}. Enter date manually (YYYY-MM-DD) or Cancel:`);
-      if (manual) {
-        const iso = manual.trim();
-        console.log('[ADD] User entered manual date:', iso);
-        const domain = guessDomain(ticker);
-        newEv = {symbol:ticker,name:ticker,date:iso,time:'TBD',domain:domain};
-        console.log('[ADD] Created manual event object:', newEv);
-        
-        console.log('[ADD] Posting to backend...');
-        const res = await postEventToBackend(newEv);
-        console.log('[ADD] Backend post result:', res);
-        
-        if (res && Array.isArray(res)) {
-          console.log('[ADD] ✅ Successfully added manual entry -> backend');
-          events = res;
-          rebuildMap();
-          renderCalendar(viewDate);
-          tickerInput.value = '';
-          showToast('success', `Manually added ${ticker}`);
-          return;
-        } else {
-          console.warn('[ADD] Backend post did not return array');
-        }
-      } else {
+      if (!manual) {
         console.log('[ADD] User cancelled manual entry');
         showToast('error', `Cancelled adding ${ticker}`);
         return;
       }
+      
+      // Create manual event
+      const iso = manual.trim();
+      console.log('[ADD] User entered manual date:', iso);
+      const domain = guessDomain(ticker);
+      const newEv = {symbol:ticker, name:ticker, date:iso, time:'TBD', domain:domain};
+      console.log('[ADD] Created manual event object:', newEv);
+      
+      console.log('[ADD] Posting manual event to backend...');
+      const res = await postEventToBackend(newEv);
+      console.log('[ADD] Backend post result:', res);
+      
+      if (res && Array.isArray(res)) {
+        console.log('[ADD] ✅ Successfully added manual entry');
+        events = res;
+        rebuildMap();
+        renderCalendar(viewDate);
+        tickerInput.value = '';
+        showToast('success', `Manually added ${ticker}`);
+        return;
+      } else {
+        // Local fallback
+        events.push(newEv);
+        rebuildMap();
+        renderCalendar(viewDate);
+        tickerInput.value = '';
+        showToast('error', 'Added locally (backend failed)');
+        console.log('[ADD] ⚠️ Added locally due to backend failure');
+        return;
+      }
     }
-
-    // If backend failed, fall back to local add
-    if (newEv) {
+    
+    // We have earnings data from the API
+    const domain = guessDomain(ticker);
+    const newEv = {
+      symbol: ticker,
+      name: earningsData.name || ticker,
+      date: earningsData.date,
+      time: earningsData.time || 'TBD',
+      domain: domain
+    };
+    console.log('[ADD] Created event object from API data:', newEv);
+    
+    console.log('[ADD] Posting event to backend...');
+    const res = await postEventToBackend(newEv);
+    console.log('[ADD] Backend post result:', res);
+    
+    if (res && Array.isArray(res)) {
+      console.log('[ADD] ✅ Successfully added via backend');
+      events = res;
+      rebuildMap();
+      renderCalendar(viewDate);
+      tickerInput.value = '';
+      return;
+    } else {
+      // Local fallback
       console.log('[ADD] Backend failed, adding locally...');
       events.push(newEv);
       rebuildMap();
       renderCalendar(viewDate);
       tickerInput.value = '';
-      showToast('error', 'Added locally (backend save failed, check console)');
+      showToast('error', 'Added locally (backend save failed)');
       console.log('[ADD] ⚠️ Added locally due to backend failure');
-    } else {
-      console.error('[ADD] ❌ No event was created - this should not happen!');
-      showToast('error', 'Failed to create event - check console for details');
     }
     
   } catch (error) {
@@ -498,15 +418,7 @@ document.getElementById('addBtn').addEventListener('click', async () => {
   }
 });
 
-function guessDomain(ticker){
-  const map = {
-    'AAPL':'apple.com','NVDA':'nvidia.com','AMD':'amd.com','TSM':'tsmc.com',
-    'AVGO':'broadcom.com','SNOW':'snowflake.com','PYPL':'paypal.com','AGO':'assuredguaranty.com'
-  };
-  return map[ticker] || (ticker.toLowerCase() + '.com');
-}
-
-// IMPROVED: Detailed initialization logging
+// Initialize
 (async function init(){
   console.log('\n========== INITIALIZATION START ==========');
   
