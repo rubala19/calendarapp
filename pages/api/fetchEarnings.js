@@ -1,51 +1,53 @@
 // pages/api/fetchEarnings.js
-// This file should be in your pages/api/ directory for Vercel to serve it
+// This endpoint fetches earnings data from external APIs
+
+const DEBUG = (process.env.DEBUG_LOGS === 'true');
+function dbg(...args){ if (DEBUG) console.log(...args); }
 
 async function fetchEarningsAlphaVantage(ticker) {
   const API_KEY = process.env.ALPHAVANTAGE_KEY;
   if (!API_KEY) {
-    console.error('[API] Missing ALPHAVANTAGE_KEY env variable');
     throw new Error("Missing ALPHAVANTAGE_KEY env variable");
   }
   
-  console.log(`[API] Fetching from Alpha Vantage for ${ticker}...`);
+  dbg('[fetchEarnings] Fetching from Alpha Vantage for', ticker);
   const url = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${ticker}&horizon=3month&apikey=${API_KEY}`;
   
   const response = await fetch(url);
-  console.log(`[API] Alpha Vantage response status: ${response.status}`);
+  dbg('[fetchEarnings] Alpha Vantage status:', response.status);
   
   if (!response.ok) {
     throw new Error(`Alpha Vantage error: ${response.status}`);
   }
   
   const text = await response.text();
-  console.log(`[API] Alpha Vantage response text (first 200 chars):`, text.substring(0, 200));
+  dbg('[fetchEarnings] Response length:', text.length);
   
   // Check for API error messages
   if (text.includes('Error Message')) {
-    console.error('[API] Alpha Vantage returned error message:', text);
+    dbg('[fetchEarnings] Alpha Vantage returned error');
     throw new Error('Alpha Vantage API error');
   }
   
   if (text.includes('Note') && text.includes('premium')) {
-    console.error('[API] Alpha Vantage rate limit hit');
+    dbg('[fetchEarnings] Alpha Vantage rate limit');
     throw new Error('Alpha Vantage rate limit reached');
   }
   
   const lines = text.trim().split("\n");
-  console.log(`[API] Parsed ${lines.length} lines from CSV`);
+  dbg('[fetchEarnings] Parsed lines:', lines.length);
   
   if (lines.length <= 1) {
-    console.log('[API] No earnings data found (only header or empty)');
+    dbg('[fetchEarnings] No earnings data (empty)');
     return null;
   }
   
   // Parse CSV line
   const [symbol, name, reportDate, fiscalDateEnding, estimate, currency] = lines[1].split(",");
-  console.log(`[API] Parsed data: symbol=${symbol}, name=${name}, date=${reportDate}`);
+  dbg('[fetchEarnings] Parsed:', { symbol, name, reportDate });
   
   if (!reportDate || reportDate === "None") {
-    console.log('[API] No valid report date found');
+    dbg('[fetchEarnings] No valid report date');
     return null;
   }
   
@@ -62,20 +64,20 @@ async function fetchEarningsAlphaVantage(ticker) {
 }
 
 async function fetchEarningsMarketData(ticker) {
-  console.log(`[API] Fetching from MarketData.app for ${ticker}...`);
+  dbg('[fetchEarnings] Fetching from MarketData.app for', ticker);
   const url = `https://api.marketdata.app/v1/stocks/earnings/${ticker}`;
   
   try {
     const response = await fetch(url);
-    console.log(`[API] MarketData response status: ${response.status}`);
+    dbg('[fetchEarnings] MarketData status:', response.status);
     
     if (!response.ok) {
-      console.log(`[API] MarketData failed with status ${response.status}`);
+      dbg('[fetchEarnings] MarketData failed');
       return null;
     }
     
     const data = await response.json();
-    console.log(`[API] MarketData response:`, data);
+    dbg('[fetchEarnings] MarketData response:', data);
     
     if (data && data.reportDate && data.reportDate.length > 0) {
       // Convert Unix timestamp to date
@@ -87,7 +89,7 @@ async function fetchEarningsMarketData(ticker) {
       const iso = `${y}-${m}-${d}`;
       const time = (data.reportTime && data.reportTime[0]) ? data.reportTime[0] : 'TBD';
       
-      console.log(`[API] MarketData success: date=${iso}, time=${time}`);
+      dbg('[fetchEarnings] MarketData success:', { iso, time });
       
       return {
         symbol: ticker,
@@ -98,69 +100,64 @@ async function fetchEarningsMarketData(ticker) {
       };
     }
     
-    console.log('[API] MarketData returned no earnings data');
+    dbg('[fetchEarnings] MarketData no data');
     return null;
   } catch (error) {
-    console.error('[API] MarketData exception:', error);
+    dbg('[fetchEarnings] MarketData exception:', error.message);
     return null;
   }
 }
 
-// Main API handler
 export default async function handler(req, res) {
-  console.log('\n========== API CALL START ==========');
-  console.log('[API] Method:', req.method);
-  console.log('[API] Query:', req.query);
+  dbg('[fetchEarnings] ===== REQUEST START =====');
+  dbg('[fetchEarnings] Method:', req.method);
+  dbg('[fetchEarnings] Query:', req.query);
   
   // Only allow GET requests
   if (req.method !== 'GET') {
-    console.log('[API] ❌ Method not allowed:', req.method);
+    dbg('[fetchEarnings] Method not allowed');
     return res.status(405).json({ error: 'Method not allowed' });
   }
   
   const { symbol } = req.query;
   
   if (!symbol) {
-    console.log('[API] ❌ Missing symbol parameter');
+    dbg('[fetchEarnings] Missing symbol');
     return res.status(400).json({ error: 'Missing symbol parameter' });
   }
   
   const ticker = symbol.toUpperCase();
-  console.log(`[API] Processing ticker: ${ticker}`);
+  dbg('[fetchEarnings] Processing ticker:', ticker);
   
   try {
     // Try MarketData.app first (more reliable, has time info)
-    console.log('[API] Trying MarketData.app first...');
+    dbg('[fetchEarnings] Trying MarketData.app...');
     let earnings = await fetchEarningsMarketData(ticker);
     
     if (earnings) {
-      console.log('[API] ✅ Success with MarketData.app');
-      console.log('========== API CALL END ==========\n');
+      dbg('[fetchEarnings] ✅ Success with MarketData');
       return res.status(200).json(earnings);
     }
     
     // Fallback to Alpha Vantage
-    console.log('[API] MarketData failed, trying Alpha Vantage...');
+    dbg('[fetchEarnings] Trying Alpha Vantage...');
     earnings = await fetchEarningsAlphaVantage(ticker);
     
     if (earnings) {
-      console.log('[API] ✅ Success with Alpha Vantage');
-      console.log('========== API CALL END ==========\n');
+      dbg('[fetchEarnings] ✅ Success with Alpha Vantage');
       return res.status(200).json(earnings);
     }
     
     // No data found
-    console.log('[API] ❌ No earnings data found from any source');
-    console.log('========== API CALL END ==========\n');
+    dbg('[fetchEarnings] ❌ No data from any source');
     return res.status(404).json({ 
       error: `No earnings data found for ${ticker}`,
       ticker: ticker
     });
     
   } catch (error) {
-    console.error('[API] ❌ Exception:', error);
-    console.error('[API] Error stack:', error.stack);
-    console.log('========== API CALL END ==========\n');
+    console.error('[fetchEarnings] ❌ Error:', error.message);
+    console.error(error.stack);
     return res.status(500).json({ 
       error: error.message || 'Failed to fetch earnings data',
       ticker: ticker
