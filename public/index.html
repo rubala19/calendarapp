@@ -1,75 +1,51 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Earnings Calendar</title>
-  <style>
-    body { background: #0d1117; color: #e6edf3; font-family: sans-serif; text-align: center; padding: 2rem; }
-    .calendar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 2rem; }
-    .event { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1rem; }
-    input, button { background: #21262d; color: #fff; border: none; padding: 0.5rem 1rem; margin: 0.25rem; border-radius: 5px; }
-    button:hover { background: #238636; cursor: pointer; }
-    .toast { position: fixed; bottom: 1rem; right: 1rem; background: #161b22; padding: 0.75rem 1rem; border-radius: 8px; opacity: 0.9; display: none; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Earnings Calendar — v3</title>
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>Earnings Calendar</h1>
-  <div>
-    <input id="symbol" placeholder="Ticker (e.g., AAPL)" />
-    <button id="addBtn">Add Event</button>
+<div class="container">
+  <header>
+    <div>
+      <h1>Earnings Calendar</h1>
+      <div class="subtitle">Persistent calendar (JSONBin) — v3</div>
+    </div>
+    <div class="controls">
+      <button id="prev" title="Previous month">←</button>
+      <button id="today" class="small" title="Jump to today">Today</button>
+      <button id="next" title="Next month">→</button>
+    </div>
+  </header>
+
+  <div class="add-form">
+    <input type="text" id="tickerInput" placeholder="Enter ticker (e.g. NVDA)" />
+    <button id="addBtn">Add / Fetch Earnings</button>
   </div>
-  <div id="calendar" class="calendar"></div>
-  <div id="toast" class="toast"></div>
 
-  <script type="module">
-    const toast = (msg) => {
-      const el = document.getElementById('toast');
-      el.textContent = msg;
-      el.style.display = 'block';
-      setTimeout(() => el.style.display = 'none', 3000);
-    };
+  <div class="calendar">
+    <div class="calendar-header">
+      <div id="monthLabel">—</div>
+      <div id="legend">Hover an item for details</div>
+    </div>
 
-    async function loadEvents() {
-      try {
-        const res = await fetch('/api/events');
-        const events = await res.json();
-        const cal = document.getElementById('calendar');
-        cal.innerHTML = '';
-        events.sort((a,b)=> new Date(a.date) - new Date(b.date));
-        events.forEach(ev => {
-          const div = document.createElement('div');
-          div.className = 'event';
-          div.innerHTML = `<strong>${ev.symbol}</strong><br>${ev.date}`;
-          cal.appendChild(div);
-        });
-      } catch (e) {
-        toast('Failed to load events');
-      }
-    }
+    <div class="weekdays" aria-hidden="true">
+      <div class="weekday">Sun</div><div class="weekday">Mon</div><div class="weekday">Tue</div>
+      <div class="weekday">Wed</div><div class="weekday">Thu</div><div class="weekday">Fri</div><div class="weekday">Sat</div>
+    </div>
 
-    document.getElementById('addBtn').onclick = async () => {
-      const symbol = document.getElementById('symbol').value.trim().toUpperCase();
-      if (!symbol) return toast('Enter a valid symbol');
-      toast(`Fetching ${symbol}...`);
-      try {
-        const earnRes = await fetch(`/api/fetchEarnings?symbol=${symbol}`);
-        const earnData = await earnRes.json();
-        if (earnData.error) throw new Error(earnData.error);
-        await fetch('/api/events', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbol, date: earnData.nextEarnings })
-        });
-        toast(`${symbol} added (${earnData.nextEarnings})`);
-        loadEvents();
-      } catch (e) {
-        console.error(e);
-        toast('Error adding event');
-      }
-    };
+    <div class="grid" id="calendarGrid" role="grid" aria-label="calendar"></div>
+    <div class="footer">Tip: you can add any ticker above and it will try to fetch the next earnings automatically.</div>
+  </div>
+</div>
 
-    loadEvents();
-  </script>
+<!-- toast container -->
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+<div id="tooltip" class="tooltip" aria-hidden="true"></div>
+
+<script src="script.js"></script>
 </body>
 </html>
